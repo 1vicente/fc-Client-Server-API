@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -47,9 +49,9 @@ func DefaultHandler(w http.ResponseWriter, r *http.Request) {
 	retorno, err := PrecoDolar()
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
+		log.Fatal(err)
 	}
 	w.WriteHeader(http.StatusOK)
-	fmt.Println(retorno)
 	var b DolarDTO
 	b.BidDTO = retorno.Bid
 
@@ -61,36 +63,43 @@ func PrecoDolar() (*DolarChamada, error) {
 	defer cancel()
 	req, error := http.NewRequestWithContext(ctx, "GET", "https://economia.awesomeapi.com.br/json/last/USD-BRL", nil)
 	if error != nil {
-		return nil, error
+		return nil, errors.New("falha ao montar a requisição")
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, error
+		return nil, errors.New("falha ao realziar a requisição")
 	}
 	defer res.Body.Close()
 	body, error := io.ReadAll(res.Body)
 	if error != nil {
-		return nil, error
+		return nil, errors.New("falha ao ler o body")
 	}
 
 	var d Dolar
 	error = json.Unmarshal(body, &d)
 	if error != nil {
-		return nil, error
+		return nil, errors.New("falha ao realizar unmarshal")
 	}
 	dTemp := d.DolarChamada
-	SalvarDb(&dTemp)
+	salvou := SalvarDb(&dTemp)
+	if !salvou {
+		return &dTemp, errors.New("falha ao salvar dados")
+	}
 
 	return &dTemp, nil
 }
 
-func SalvarDb(dolar *DolarChamada) {
+func SalvarDb(dolar *DolarChamada) bool {
 	db, err := gorm.Open(sqlite.Open("database.db"), &gorm.Config{})
 	if err != nil {
 		fmt.Println(err)
 	}
 	db.AutoMigrate(&Dolar{}, &DolarChamada{})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
 	defer cancel()
-	db.WithContext(ctx).Create(&dolar)
+	save := db.WithContext(ctx).Create(&dolar)
+	if save.Error != nil {
+		return false
+	}
+	return true
 }
